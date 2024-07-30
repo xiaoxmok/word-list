@@ -1,7 +1,7 @@
 function calculate() {
   const data = []
 
-  let value = 20;
+  let value = 30;
   const results = [value];
 
   let percentage = 3
