@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Document</title>
+  <style>
+    canvas, video {
+      width: 300px;
+      height: 200px;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="canvas" width="600" height="400"></canvas>
+
+<p class="flex">
+    <button id="generate">生成MP4视频</button>
+    <a id="download" download="muxer-no-audio.mp4">下载</a>
+</p>
+
+<div class="view">
+    <video id="video" width="600" height="400" controls autoplay></video>
+    <p class="time">视频生成时间：<output id="output"></output></p>
+</div>
+<script>
+  // 代码使用字面量风格
+// ES5语法
+var handleDraw = function (canvas, process, complete) {
+	if (!canvas) {
+		return;	
+	}
+	// 是否是屏幕内canvas
+	var isOffscreenCanvas = !document.body.contains(canvas);
+	// 上下文
+	var context = canvas.getContext('2d');
+	// 尺寸
+	var width = canvas.width;
+	var height = canvas.height;
+	
+	// 开始主体的绘制
+	var currentFrame = 1;
+	var maxFrame = 50;
+	// 实现个简单的动画
+	// 图片左进入，文字右进入
+	// 1. 图片资源获取
+	var image = new Image();
+	// 图片的x坐标
+	var imageStartX = -1 * width;
+	var imageEndX = 24;
+	// y坐标
+	var imageY = 50;
+	// 2. 文字资源
+	var textLine1 = '《CSS选择器世界';
+	var textLine2 = '  第2版》上架啦';
+	var fontSize = 30;
+	// 文字起止位置
+	var fontStartX = width;
+	var fontEndX = width / 2;
+	// 帧率控制在每秒30帧
+	// 如果是视频生成(屏幕外canvas)，则越快越好，不受此限制
+	// 图片和文字的绘制方法
+	var draw = function () {
+		// 清除画布
+		context.clearRect(0, 0, width, height);
+		// 先绘制个背景
+		// 创建渐变
+		var gradient = context.createLinearGradient(0, 0, 0, height);
+		gradient.addColorStop(0, '#f0f3f9');
+		gradient.addColorStop(1, 'aliceblue');
+		// 设置填充样式为渐变
+		context.fillStyle = gradient;
+		// 矩形填充
+		context.fillRect(0, 0, width, height);	
+		
+		// 根据当前帧，确定图片和文字的x坐标位置
+		// 简单点，就线性运动好了
+		// 为了动画效果更好，动画结束需要有停留，因此
+		var scale = Math.min(currentFrame / 30, 1);
+		// 位置确定
+		var imageX = imageStartX + [imageEndX - imageStartX] * scale;
+		var fontX = fontStartX + [fontEndX - fontStartX] * scale;
+		
+		// 绘制图片
+		context.drawImage(image, imageX, imageY);
+		// 绘制文字
+		context.fillStyle = '#333';
+		context.font = 'bold ' + fontSize + 'px system-ui';
+		context.textBaseline = 'middle';
+		context.fillText(textLine1, fontX, height / 2 - fontSize);
+		context.fillText(textLine2, fontX, height / 2 + fontSize);
+	};
+	
+	
+	// 图片加载成功后，开始绘制
+	image.onload = function () {
+		// 图片原始尺寸
+		var naturalWidth = this.naturalWidth;
+		var naturalHeight = this.naturalHeight;
+		// 可以精确确定动画元素的起止位置了
+		imageStartX = -1 * naturalWidth;
+		imageY = (height - naturalHeight) / 2;
+		fontEndX = imageEndX + naturalWidth + imageEndX;
+		
+		// 开始绘制
+		if (isOffscreenCanvas) {
+			// 屏幕外绘制
+			// 一次性的
+			for (var index = 1; index <= maxFrame; index++) {
+				currentFrame = index;
+				draw();
+				process && process(canvas);
+				if (currentFrame === maxFrame && complete) {
+					 complete();	
+				}
+			}
+		} else {
+			// 定时不停绘制
+			setInterval(function () {
+				draw();
+				// 为下一帧绘制做准备
+				currentFrame ++;
+				
+				if (currentFrame > maxFrame) {
+					currentFrame = 1;
+				}
+			}, 1000 / 30);
+		}
+	}
+	image.src = window.bookUrl || './book.jpg';
+};
+</script>
+<script>
+  // 页面内动画示意
+handleDraw(document.getElementById('canvas'));
+
+// 构造器，和音视频编码对象
+var muxer = null;
+var videoEncoder = null;
+
+// 结束编码
+const endEncoding = async () => {
+    await videoEncoder?.flush();
+    muxer.finalize();
+
+    let buffer = muxer.target?.buffer;
+
+    var blobUrl = URL.createObjectURL(new Blob([buffer]));
+    video.src = blobUrl;
+    download.href = blobUrl;
+
+    videoEncoder = null;
+    muxer = null;
+};
+
+// 创建屏幕外 canvas
+var canvas = document.createElement('canvas');
+canvas.width = 600;
+canvas.height = 400;
+
+// 构造包装器
+muxer = new Mp4Muxer.Muxer({
+    target: new Mp4Muxer.ArrayBufferTarget(),
+    video: {
+        codec: 'avc',
+        width: canvas.width,
+        height: canvas.height,
+        frameRate: 30
+    },
+    firstTimestampBehavior: 'offset'
+});
+
+// 音视频编码器，这里使用的是WebCodese API
+videoEncoder = new VideoEncoder({
+    output: (chunk, meta) => muxer.addVideoChunk(chunk, meta),
+    error: e => console.error(e)
+});
+videoEncoder.configure({
+    codec: 'avc1.42001f',
+    width: canvas.width,
+    height: canvas.height,
+    bitrate: 1e6
+});
+
+// 点击按钮的mp4生成
+generate.onclick = async function () {
+    // 编码视频数据
+    var startTime = document.timeline.currentTime;
+    var frameCounter = 0;
+    // handleDraw源码可右键页面查看
+    handleDraw(canvas, function () {
+        let frame = new VideoFrame(canvas, {
+            timestamp: (frameCounter * 1000 / 30) * 1000
+        });
+
+        frameCounter++;
+        videoEncoder.encode(frame, { 
+            keyFrame: frameCounter % 30 === 0 
+        });
+        frame.close();
+    }, function () {
+        // 预期结束时间
+        // 由于音频和视频的编码时间不一致
+        // 所以这里需要等待音频编码结束
+        // 才能结束视频编码
+        const timeUsed = document.timeline.currentTime - startTime;
+        endEncoding();
+        // 时间设置
+        output.innerHTML = Math.round(timeUsed / 10) / 100;
+    });
+
+    // 一次性点击
+    this.disabled = true;
+    this.textContent = '生成中...';
+};
+</script>
+
+</body>
+</html>
